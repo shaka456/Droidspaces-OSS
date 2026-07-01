@@ -210,6 +210,20 @@ int setup_cgroups(int is_systemd, int force_cgroupv1) {
      * cgroup namespace. Isolation is handled by the kernel namespace. */
     if (mount("cgroup2", "sys/fs/cgroup", "cgroup2",
               MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) == 0) {
+      /* Enable controllers for systemd 257+.
+       * Inside a cgroup namespace, the kernel forbids writing to the
+       * namespace root's subtree_control, so we must do it here before
+       * the container's init takes over. */
+      {
+        int cg_fd = open("sys/fs/cgroup/cgroup.subtree_control",
+                         O_WRONLY | O_CLOEXEC);
+        if (cg_fd >= 0) {
+          if (write(cg_fd, "+cpu +memory +cpuset", 20) < 0)
+            ds_log("[CGROUP] Failed to set subtree_control: %s",
+                   strerror(errno));
+          close(cg_fd);
+        }
+      }
       systemd_setup_done = 1;
     } else {
       ds_error("Failed to mount cgroup2: %s", strerror(errno));
