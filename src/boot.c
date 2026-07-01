@@ -179,6 +179,19 @@ int internal_boot(struct ds_config *cfg) {
     }
   }
 
+  /* Pre-bind host cgroup into rootfs so setup_cgroups() can bind-mount
+   * it instead of creating a fresh cgroup2 hierarchy that lacks some
+   * files (cgroup.type, cpuset.cpus, etc.) needed by systemd 257+. */
+  {
+    char host_cg[PATH_MAX + 32];
+    snprintf(host_cg, sizeof(host_cg), "%s/.host-cgroup", cfg->rootfs_path);
+    mkdir_p(host_cg, 0755);
+    if (mount("/sys/fs/cgroup", host_cg, NULL, MS_BIND | MS_REC, NULL) < 0)
+      ds_warn("host cgroup bind failed: %s (will use fresh mount)", strerror(errno));
+    else
+      ds_log("Host cgroup pre-bound for container.");
+  }
+
   /* 1. Isolated mount namespace */
   if (unshare(CLONE_NEWNS) < 0) {
     ds_error("Failed to unshare mount namespace: %s", strerror(errno));

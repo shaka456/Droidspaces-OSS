@@ -206,13 +206,28 @@ int setup_cgroups(int is_systemd, int force_cgroupv1) {
   int systemd_setup_done = 0;
 
   if (v2_active) {
-    /* Always mount a fresh cgroup2 hierarchy within the container's
-     * cgroup namespace. Isolation is handled by the kernel namespace. */
-    if (mount("cgroup2", "sys/fs/cgroup", "cgroup2",
-              MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) == 0) {
+    /* Try bind-mounting the pre-bound host cgroup first. This preserves
+     * cgroup.type, cpuset.cpus, and other files that systemd 257+ needs
+     * but a fresh cgroup2 mount inside a cgroup namespace omits. */
+    int cg_mounted = 0;
+    if (access(".host-cgroup/cgroup.procs", F_OK) == 0) {
+      if (mount(".host-cgroup", "sys/fs/cgroup", NULL,
+                MS_BIND | MS_REC, NULL) == 0) {
+        ds_log("[CGROUP] Bind-mounted host cgroup.");
+        cg_mounted = 1;
+      }
+    }
+    if (!cg_mounted) {
+      /* Fallback: fresh cgroup2 mount (older approach) */
+      if (mount("cgroup2", "sys/fs/cgroup", "cgroup2",
+                MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) == 0) {
+        cg_mounted = 1;
+      } else {
+        ds_error("Failed to mount cgroup2: %s", strerror(errno));
+      }
+    }
+    if (cg_mounted) {
       systemd_setup_done = 1;
-    } else {
-      ds_error("Failed to mount cgroup2: %s", strerror(errno));
     }
   } else {
     /* V1 PATH (force_cgroupv1): Synthesize fresh mounts for all controllers. */
