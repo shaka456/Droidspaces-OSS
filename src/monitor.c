@@ -75,34 +75,39 @@ void ds_monitor_run(struct ds_config *cfg, int sync_pipe_write) {
       /* v2: enable requested controllers top-down BEFORE mkdir.
        * Controllers only appear in a child cgroup if the parent's
        * subtree_control has them enabled first. Walk two levels:
-       * /sys/fs/cgroup -> /sys/fs/cgroup/droidspaces */
-      if (cfg->memory_limit || cfg->cpu_quota || cfg->pids_limit) {
-        /* Build enable string with snprintf offsets instead of strncat to
-         * avoid truncation. Use ds_cg_word_in_list() for exact word-boundary
-         * matching to prevent false positives (e.g. matching "cpuset"
-         * when looking for "cpu"). */
-        char enable[64] = {0};
-        char buf[256];
-        int eoff = 0;
+       * /sys/fs/cgroup -> /sys/fs/cgroup/droidspaces
+       *
+       * Systemd 257+ requires cpu, memory, and cpuset to be enabled
+       * in the namespace root's subtree_control. Since the kernel
+       * forbids writing to the namespace root after unshare(), we
+       * must enable controllers here, BEFORE CLONE_NEWCGROUP. */
+      char enable[80] = {0};
+      char buf[256];
+      int eoff = 0;
+
+      {
         if (read_file("/sys/fs/cgroup/cgroup.controllers", buf, sizeof(buf)) >
             0) {
-          if (cfg->memory_limit && ds_cg_word_in_list(buf, "memory")) {
+          /* Always enable core controllers needed by systemd */
+          if (ds_cg_word_in_list(buf, "cpuset")) {
             int n = snprintf(enable + eoff, sizeof(enable) - (size_t)eoff,
-                             "%s+memory", eoff ? " " : "");
-            if (n > 0)
-              eoff += n;
+                             "%s+cpuset", eoff ? " " : "");
+            if (n > 0) eoff += n;
           }
-          if (cfg->cpu_quota && ds_cg_word_in_list(buf, "cpu")) {
+          if (ds_cg_word_in_list(buf, "cpu")) {
             int n = snprintf(enable + eoff, sizeof(enable) - (size_t)eoff,
                              "%s+cpu", eoff ? " " : "");
-            if (n > 0)
-              eoff += n;
+            if (n > 0) eoff += n;
+          }
+          if (ds_cg_word_in_list(buf, "memory")) {
+            int n = snprintf(enable + eoff, sizeof(enable) - (size_t)eoff,
+                             "%s+memory", eoff ? " " : "");
+            if (n > 0) eoff += n;
           }
           if (cfg->pids_limit && ds_cg_word_in_list(buf, "pids")) {
             int n = snprintf(enable + eoff, sizeof(enable) - (size_t)eoff,
                              "%s+pids", eoff ? " " : "");
-            if (n > 0)
-              eoff += n;
+            if (n > 0) eoff += n;
           }
         }
         if (eoff > 0) {
@@ -120,6 +125,17 @@ void ds_monitor_run(struct ds_config *cfg, int sync_pipe_write) {
       snprintf(cg_path, sizeof(cg_path), "/sys/fs/cgroup/droidspaces/%s",
                safe_name);
       mkdir_p(cg_path, 0755);
+
+      /* Enable subtree_control on the container root cgroup so systemd
+       * can create its slice/scope hierarchy after namespace creation. */
+      if (eoff > 0) {
+        char cg_subctl[PATH_MAX];
+        snprintf(cg_subctl, sizeof(cg_subctl), "%s/cgroup.subtree_control",
+                 cg_path);
+        if (write_file(cg_subctl, enable) < 0)
+          ds_warn("[CGROUP] subtree_control (%s): %s", safe_name,
+                  strerror(errno));
+      }
 
       char cg_procs[PATH_MAX];
       safe_strncpy(cg_procs, cg_path, sizeof(cg_procs));
