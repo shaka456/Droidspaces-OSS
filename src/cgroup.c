@@ -210,11 +210,22 @@ int setup_cgroups(int is_systemd, int force_cgroupv1) {
      * cgroup.type, cpuset.cpus, and other files that systemd 257+ needs
      * but a fresh cgroup2 mount inside a cgroup namespace omits. */
     int cg_mounted = 0;
-    if (access(".host-cgroup/cgroup.procs", F_OK) == 0) {
-      if (mount(".host-cgroup", "sys/fs/cgroup", NULL,
-                MS_BIND | MS_REC, NULL) == 0) {
-        ds_log("[CGROUP] Bind-mounted host cgroup.");
-        cg_mounted = 1;
+    {
+      int has_host_cg = access(".host-cgroup/cgroup.procs", F_OK) == 0;
+      ds_log("[CGROUP] .host-cgroup available: %d", has_host_cg);
+      if (has_host_cg) {
+        /* Check what's in .host-cgroup */
+        char cg_buf[256] = {0};
+        if (read_file(".host-cgroup/cgroup.controllers", cg_buf, sizeof(cg_buf)) > 0)
+          cg_buf[strcspn(cg_buf, "\n")] = 0;
+        ds_log("[CGROUP] .host-cgroup controllers: '%s'", cg_buf);
+        if (mount(".host-cgroup", "sys/fs/cgroup", NULL,
+                  MS_BIND | MS_REC, NULL) == 0) {
+          ds_log("[CGROUP] Bind-mounted host cgroup.");
+          cg_mounted = 1;
+        } else {
+          ds_warn("[CGROUP] Bind mount failed: %s", strerror(errno));
+        }
       }
     }
     if (!cg_mounted) {
