@@ -104,7 +104,7 @@ void ds_monitor_run(struct ds_config *cfg, int sync_pipe_write) {
                              "%s+memory", eoff ? " " : "");
             if (n > 0) eoff += n;
           }
-          if (cfg->pids_limit && ds_cg_word_in_list(buf, "pids")) {
+          if (ds_cg_word_in_list(buf, "pids")) {
             int n = snprintf(enable + eoff, sizeof(enable) - (size_t)eoff,
                              "%s+pids", eoff ? " " : "");
             if (n > 0) eoff += n;
