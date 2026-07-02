@@ -452,6 +452,12 @@ int internal_boot(struct ds_config *cfg) {
   /* 18. Setup devpts (must be after pivot_root for newinstance) */
   setup_devpts(cfg->hw_access);
 
+  /* After pivot_root, the console bind mount is lost (it was in the old
+   * root). Systemd 257+ tries to open /dev/console and fails with ENODEV.
+   * Bind /dev/null as a safe fallback console. */
+  if (mount("/dev/null", "dev/console", NULL, MS_BIND, NULL) < 0)
+    ds_warn("[CGROUP] Failed to bind console fallback: %s", strerror(errno));
+
   /* Apply jail mask after pivot_root for correct path resolution */
   ds_apply_jail_mask(cfg->hw_access, cfg->privileged_mask);
 
